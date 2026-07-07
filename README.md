@@ -26,6 +26,8 @@ BINANCE_API_KEY=
 BINANCE_API_SECRET=
 BINANCE_TESTNET=true
 DRY_RUN=true
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 ```
 
 전략 옵션, 심볼별 최적값, 진입금액, 손실 제한 같은 운용 설정은 `.env`가 아니라 `config\live.yaml`에서 수정합니다. `.env`는 API 키와 실행 환경값만 보관합니다.
@@ -114,6 +116,27 @@ python main.py live --symbols BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT --interval 1h --p
 ```powershell
 python main.py preflight --symbols BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT --interval 1h --preset symbol-optimized
 ```
+
+## 운영 로그와 알림
+
+텔레그램 알림을 쓰려면 `.env`에 아래 값을 넣습니다.
+
+```env
+TELEGRAM_BOT_TOKEN=텔레그램_봇_토큰
+TELEGRAM_CHAT_ID=텔레그램_채팅_ID
+```
+
+알림은 `HOLD`마다 보내지 않고, 봇 시작/종료, 실제 주문 진입, 청산, 주문 에러, tick 에러만 보냅니다.
+
+하루 요약 로그는 `config\live.yaml`의 설정을 따릅니다.
+
+```yaml
+settings:
+  daily_summary_dir: logs/daily
+  daily_summary_retention_days: 90
+```
+
+요약 로그는 하루에 하나의 `daily_summary_YYYY-MM-DD.md` 파일로 갱신됩니다. 기본값은 최근 90일만 보관하므로 시간이 지나도 기록이 과하게 쌓이지 않습니다.
 
 ## 실거래 전 주의
 

@@ -19,6 +19,8 @@ DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
         "margin_type": "ISOLATED",
         "poll_seconds": 15,
         "live_order_log_path": "logs/live_orders.csv",
+        "daily_summary_dir": "logs/daily",
+        "daily_summary_retention_days": 90,
     },
     "capital": {
         "usdt_per_trade": 100,
@@ -48,6 +50,10 @@ DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
         "max_consecutive_losses": 0,
         "cooldown_minutes": 0,
         "max_abs_funding_rate": 0,
+    },
+    "notifications": {
+        "telegram_enabled": True,
+        "telegram_timeout_seconds": 10,
     },
     "presets": {
         "default": {},

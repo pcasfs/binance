@@ -11,7 +11,9 @@ from typing import Any
 
 from trader.binance_client import BinanceFuturesClient
 from trader.config import Settings
+from trader.daily_summary import DailySummaryLogger
 from trader.models import Candle
+from trader.notifications import TelegramNotifier
 from trader.presets import apply_symbol_preset
 from trader.risk import pnl_pct
 from trader.strategy import Strategy, build_strategy
@@ -62,6 +64,8 @@ class TradingBot:
         self.consecutive_losses = 0
         self.cooldown_until = 0.0
         self._symbol_rules: dict[str, SymbolRules] = {}
+        self.notifier = TelegramNotifier(settings)
+        self.summary = DailySummaryLogger(settings, self.symbols, base_interval, preset)
 
     def run_forever(self) -> None:
         first_settings = next(iter(self.symbol_settings.values()))
@@ -72,14 +76,25 @@ class TradingBot:
             self.settings.testnet,
             self.settings.dry_run,
         )
+        self.notifier.send(
+            "Binance bot started\n"
+            f"symbols={','.join(self.symbols)}\n"
+            f"interval={first_settings.interval}\n"
+            f"testnet={self.settings.testnet}\n"
+            f"dry_run={self.settings.dry_run}"
+        )
         while True:
             try:
                 self.tick()
             except KeyboardInterrupt:
                 logger.info("Stopped by user.")
+                self.summary.write()
+                self.notifier.send("Binance bot stopped by user")
                 return
-            except Exception:
+            except Exception as exc:
                 logger.exception("Tick failed.")
+                self.summary.record_tick_error(str(exc))
+                self.notifier.send(f"Binance bot tick error\n{exc}")
             time.sleep(self.settings.poll_seconds)
 
     def tick(self) -> None:
@@ -99,6 +114,7 @@ class TradingBot:
         mark_price = self.client.mark_price(symbol)
         self._manage_open_positions(symbol, settings, mark_price)
         logger.info("%s signal=%s reason=%s mark=%s", symbol, signal.action, signal.reason, mark_price)
+        self.summary.record_signal(symbol, signal.action)
         if signal.action in {"LONG", "SHORT"} and signal.action != self.last_action[symbol]:
             if self._order(symbol, settings, signal.action, mark_price):
                 self.last_action[symbol] = signal.action
@@ -106,15 +122,19 @@ class TradingBot:
     def _order(self, symbol: str, settings: Settings, action: str, mark_price: Decimal) -> bool:
         if self._has_open_position(symbol, mark_price):
             logger.info("%s entry blocked: symbol already has an open position.", symbol)
+            self.summary.record_blocked(symbol, "symbol already has an open position")
             return False
         if self._daily_loss_limit_hit(settings):
             logger.warning("%s entry blocked: daily loss limit reached.", symbol)
+            self.summary.record_blocked(symbol, "daily loss limit reached")
             return False
         if self._cooldown_active():
             logger.warning("%s entry blocked: cooldown is active.", symbol)
+            self.summary.record_blocked(symbol, "cooldown is active")
             return False
         if self._funding_unfavorable(symbol, action, settings):
             logger.info("%s entry blocked: funding rate is unfavorable for %s.", symbol, action)
+            self.summary.record_blocked(symbol, "funding rate is unfavorable")
             return False
 
         side = "BUY" if action == "LONG" else "SELL"
@@ -125,12 +145,21 @@ class TradingBot:
         )
         if not quantity_plan.is_valid:
             logger.warning("%s entry blocked: invalid order quantity: %s", symbol, quantity_plan.reason)
+            self.summary.record_blocked(symbol, f"invalid order quantity: {quantity_plan.reason}")
             return False
         quantity = quantity_plan.quantity
         logger.info("%s order intent side=%s positionSide=%s quantity=%s notional=%s", symbol, side, action, quantity, quantity_plan.notional)
         if settings.dry_run:
+            self.summary.record_entry(symbol, f"DRY_RUN_{action}", quantity, quantity_plan.notional)
+            self.notifier.send(
+                "Dry-run entry signal\n"
+                f"symbol={symbol}\n"
+                f"side={action}\n"
+                f"quantity={quantity}\n"
+                f"notional={quantity_plan.notional:.4f}"
+            )
             return True
-        self._place_market_order(
+        response = self._place_market_order(
             settings=settings,
             symbol=symbol,
             side=side,
@@ -140,6 +169,15 @@ class TradingBot:
             requested_price=mark_price,
             stop_loss=self._stop_price(action, mark_price, settings),
             take_profit=self._target_price(action, mark_price, settings),
+        )
+        self.summary.record_entry(symbol, action, quantity, quantity_plan.notional)
+        self.notifier.send(
+            "Entry order sent\n"
+            f"symbol={symbol}\n"
+            f"side={action}\n"
+            f"quantity={quantity}\n"
+            f"notional={quantity_plan.notional:.4f}\n"
+            f"order_id={response.get('orderId')}"
         )
         return True
 
@@ -196,6 +234,15 @@ class TradingBot:
             if position.side == "SHORT":
                 realized = -realized
             self._record_closed_trade(realized)
+            self.summary.record_exit(symbol, position.side, realized)
+            self.notifier.send(
+                "Exit order sent\n"
+                f"symbol={symbol}\n"
+                f"side={position.side}\n"
+                f"quantity={quantity}\n"
+                f"realized_pnl~={realized:.4f}\n"
+                f"order_id={response.get('orderId')}"
+            )
             self.last_action[symbol] = None
 
     def _place_market_order(
@@ -213,6 +260,14 @@ class TradingBot:
         try:
             response = self.client.market_order(symbol, side, quantity, position_side)
         except Exception as exc:
+            self.summary.record_order_error(symbol, str(exc))
+            self.notifier.send(
+                "Order error\n"
+                f"symbol={symbol}\n"
+                f"side={position_side}\n"
+                f"action={action}\n"
+                f"error={exc}"
+            )
             self._write_order_log(
                 settings,
                 symbol=symbol,
@@ -301,6 +356,7 @@ class TradingBot:
             self.daily_realized_pnl = Decimal("0")
             self.consecutive_losses = 0
             self.cooldown_until = 0.0
+        self.summary.roll_if_needed()
 
     def _write_order_log(
         self,

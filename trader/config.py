@@ -46,6 +46,12 @@ class Settings:
     cooldown_minutes: int
     max_abs_funding_rate: float
     live_order_log_path: str
+    daily_summary_dir: str
+    daily_summary_retention_days: int
+    telegram_bot_token: str
+    telegram_chat_id: str
+    telegram_enabled: bool
+    telegram_timeout_seconds: int
     poll_seconds: int
 
     @classmethod
@@ -58,6 +64,7 @@ class Settings:
         ema_config = config["ema_cross"]
         ha_config = config["heikin_ashi_stoch"]
         risk_config = config["risk"]
+        notifications_config = config["notifications"]
         settings = cls(
             api_key=os.getenv("BINANCE_API_KEY", ""),
             api_secret=os.getenv("BINANCE_API_SECRET", ""),
@@ -88,6 +95,12 @@ class Settings:
             cooldown_minutes=int(risk_config["cooldown_minutes"]),
             max_abs_funding_rate=float(risk_config["max_abs_funding_rate"]),
             live_order_log_path=str(settings_config["live_order_log_path"]),
+            daily_summary_dir=str(settings_config["daily_summary_dir"]),
+            daily_summary_retention_days=int(settings_config["daily_summary_retention_days"]),
+            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+            telegram_enabled=bool(notifications_config["telegram_enabled"]),
+            telegram_timeout_seconds=int(notifications_config["telegram_timeout_seconds"]),
             poll_seconds=int(settings_config["poll_seconds"]),
         )
         settings.validate()
@@ -112,3 +125,7 @@ class Settings:
             raise ValueError("Cooldown settings cannot be negative.")
         if self.max_abs_funding_rate < 0:
             raise ValueError("MAX_ABS_FUNDING_RATE cannot be negative.")
+        if self.daily_summary_retention_days < 1:
+            raise ValueError("daily_summary_retention_days must be at least 1.")
+        if self.telegram_timeout_seconds < 1:
+            raise ValueError("telegram_timeout_seconds must be at least 1.")

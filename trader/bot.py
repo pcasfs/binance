@@ -12,6 +12,7 @@ from typing import Any
 from trader.binance_client import BinanceFuturesClient
 from trader.config import Settings
 from trader.daily_summary import DailySummaryLogger
+from trader.event_log import EventLogger
 from trader.models import Candle
 from trader.notifications import TelegramNotifier
 from trader.presets import apply_symbol_preset
@@ -66,6 +67,8 @@ class TradingBot:
         self._symbol_rules: dict[str, SymbolRules] = {}
         self.notifier = TelegramNotifier(settings)
         self.summary = DailySummaryLogger(settings, self.symbols, base_interval, preset)
+        self.events = EventLogger(settings)
+        self.last_signal_log_key: dict[str, tuple[int, str] | None] = {symbol: None for symbol in self.symbols}
 
     def run_forever(self) -> None:
         first_settings = next(iter(self.symbol_settings.values()))
@@ -83,17 +86,23 @@ class TradingBot:
             f"testnet={self.settings.testnet}\n"
             f"dry_run={self.settings.dry_run}"
         )
+        self._record_event(
+            "BOT_START",
+            message=f"symbols={','.join(self.symbols)} interval={first_settings.interval} testnet={self.settings.testnet} dry_run={self.settings.dry_run}",
+        )
         while True:
             try:
                 self.tick()
             except KeyboardInterrupt:
                 logger.info("Stopped by user.")
                 self.summary.write()
+                self._record_event("BOT_STOP", message="Stopped by user")
                 self.notifier.send("Binance bot stopped by user")
                 return
             except Exception as exc:
                 logger.exception("Tick failed.")
                 self.summary.record_tick_error(str(exc))
+                self._record_event("TICK_ERROR", error=str(exc))
                 self.notifier.send(f"Binance bot tick error\n{exc}")
             time.sleep(self.settings.poll_seconds)
 
@@ -112,6 +121,7 @@ class TradingBot:
         ]
         signal = strategy.signal(candles)
         mark_price = self.client.mark_price(symbol)
+        self._record_signal_event_once_per_candle(symbol, signal.action, signal.reason, mark_price, candles, strategy)
         self._manage_open_positions(symbol, settings, mark_price)
         logger.info("%s signal=%s reason=%s mark=%s", symbol, signal.action, signal.reason, mark_price)
         self.summary.record_signal(symbol, signal.action)
@@ -123,18 +133,22 @@ class TradingBot:
         if self._has_open_position(symbol, mark_price):
             logger.info("%s entry blocked: symbol already has an open position.", symbol)
             self.summary.record_blocked(symbol, "symbol already has an open position")
+            self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason="symbol already has an open position")
             return False
         if self._daily_loss_limit_hit(settings):
             logger.warning("%s entry blocked: daily loss limit reached.", symbol)
             self.summary.record_blocked(symbol, "daily loss limit reached")
+            self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason="daily loss limit reached")
             return False
         if self._cooldown_active():
             logger.warning("%s entry blocked: cooldown is active.", symbol)
             self.summary.record_blocked(symbol, "cooldown is active")
+            self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason="cooldown is active")
             return False
         if self._funding_unfavorable(symbol, action, settings):
             logger.info("%s entry blocked: funding rate is unfavorable for %s.", symbol, action)
             self.summary.record_blocked(symbol, "funding rate is unfavorable")
+            self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason="funding rate is unfavorable")
             return False
 
         side = "BUY" if action == "LONG" else "SELL"
@@ -146,6 +160,7 @@ class TradingBot:
         if not quantity_plan.is_valid:
             logger.warning("%s entry blocked: invalid order quantity: %s", symbol, quantity_plan.reason)
             self.summary.record_blocked(symbol, f"invalid order quantity: {quantity_plan.reason}")
+            self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason=quantity_plan.reason)
             return False
         quantity = quantity_plan.quantity
         logger.info("%s order intent side=%s positionSide=%s quantity=%s notional=%s", symbol, side, action, quantity, quantity_plan.notional)
@@ -188,11 +203,52 @@ class TradingBot:
             if not position.is_open or position.entry_price <= 0:
                 continue
             pnl = pnl_pct(position.side, position.entry_price, position.mark_price)
+            stop_loss = self._stop_price(position.side, position.entry_price, settings)
+            take_profit = self._target_price(position.side, position.entry_price, settings)
+            self._record_event(
+                "POSITION_CHECK",
+                symbol=symbol,
+                side=position.side,
+                mark_price=position.mark_price,
+                entry_price=position.entry_price,
+                quantity=abs(position.amount),
+                notional=position.notional,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                pnl_pct=pnl * Decimal("100"),
+                distance_to_stop_pct=self._distance_to_stop_pct(position.side, position.mark_price, stop_loss),
+                distance_to_take_profit_pct=self._distance_to_take_profit_pct(position.side, position.mark_price, take_profit),
+                position_amount=position.amount,
+            )
             if pnl <= -Decimal(str(settings.stop_loss_pct)):
                 logger.warning("%s %s stop loss triggered pnl=%s", symbol, position.side, pnl)
+                self._record_event(
+                    "EXIT_TRIGGER",
+                    symbol=symbol,
+                    side=position.side,
+                    mark_price=position.mark_price,
+                    entry_price=position.entry_price,
+                    quantity=abs(position.amount),
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    pnl_pct=pnl * Decimal("100"),
+                    reason="stop_loss",
+                )
                 self._close(symbol, settings, position)
             elif pnl >= Decimal(str(settings.take_profit_pct)):
                 logger.info("%s %s take profit triggered pnl=%s", symbol, position.side, pnl)
+                self._record_event(
+                    "EXIT_TRIGGER",
+                    symbol=symbol,
+                    side=position.side,
+                    mark_price=position.mark_price,
+                    entry_price=position.entry_price,
+                    quantity=abs(position.amount),
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    pnl_pct=pnl * Decimal("100"),
+                    reason="take_profit",
+                )
                 self._close(symbol, settings, position)
 
     def _positions(self, symbol: str, fallback_mark_price: Decimal) -> list[LivePosition]:
@@ -282,6 +338,18 @@ class TradingBot:
                 status="ERROR",
                 error_message=str(exc),
             )
+            self._record_event(
+                "ORDER_ERROR",
+                symbol=symbol,
+                side=position_side,
+                mark_price=requested_price,
+                quantity=quantity,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                error=str(exc),
+                status="ERROR",
+                reason=action,
+            )
             raise
 
         filled_price = self._filled_price(response)
@@ -298,6 +366,19 @@ class TradingBot:
             order_id=response.get("orderId"),
             status=str(response.get("status", "UNKNOWN")),
             error_message="",
+        )
+        self._record_event(
+            "ORDER",
+            symbol=symbol,
+            side=position_side,
+            mark_price=requested_price,
+            entry_price=filled_price,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            order_id=response.get("orderId"),
+            status=str(response.get("status", "UNKNOWN")),
+            reason=action,
         )
         return response
 
@@ -410,6 +491,61 @@ class TradingBot:
                     "error_message": error_message,
                 }
             )
+
+    def _record_signal_event_once_per_candle(
+        self,
+        symbol: str,
+        signal: str,
+        reason: str,
+        mark_price: Decimal,
+        candles: list[Candle],
+        strategy: Strategy,
+    ) -> None:
+        if not candles:
+            return
+        candle_key = candles[-1].open_time
+        log_key = (candle_key, signal)
+        if self.last_signal_log_key.get(symbol) == log_key:
+            return
+        self.last_signal_log_key[symbol] = log_key
+        snapshot = self._indicator_snapshot(strategy, candles)
+        self._record_event(
+            "SIGNAL_CHECK",
+            symbol=symbol,
+            signal=signal,
+            reason=reason,
+            mark_price=mark_price,
+            **snapshot,
+        )
+
+    @staticmethod
+    def _indicator_snapshot(strategy: Strategy, candles: list[Candle]) -> dict[str, Any]:
+        snapshotter = getattr(strategy, "indicator_snapshot", None)
+        if not callable(snapshotter):
+            return {}
+        return snapshotter(candles)
+
+    def _record_event(self, event_type: str, **values: Any) -> None:
+        try:
+            self.events.record(event_type, **values)
+        except Exception as exc:
+            logger.warning("Event log write failed: %s", exc)
+
+    @staticmethod
+    def _distance_to_stop_pct(side: str, mark_price: Decimal, stop_loss: Decimal) -> Decimal:
+        if mark_price <= 0:
+            return Decimal("0")
+        if side == "LONG":
+            return (mark_price - stop_loss) / mark_price * Decimal("100")
+        return (stop_loss - mark_price) / mark_price * Decimal("100")
+
+    @staticmethod
+    def _distance_to_take_profit_pct(side: str, mark_price: Decimal, take_profit: Decimal) -> Decimal:
+        if mark_price <= 0:
+            return Decimal("0")
+        if side == "LONG":
+            return (take_profit - mark_price) / mark_price * Decimal("100")
+        return (mark_price - take_profit) / mark_price * Decimal("100")
 
     @staticmethod
     def _filled_price(response: dict[str, Any]) -> Decimal | None:

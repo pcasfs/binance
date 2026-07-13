@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 import pandas as pd
 
@@ -118,6 +119,26 @@ class HeikinAshiStochStrategy(Strategy):
             else:
                 signals.append(Signal("HOLD", "No Heikin-Ashi/StochRSI setup."))
         return signals
+
+    def indicator_snapshot(self, candles: list[Candle]) -> dict[str, Any]:
+        if len(candles) < 2:
+            return {}
+        df = self._indicator_frame(candles)
+        curr = df.iloc[-1]
+        prev = df.iloc[-2]
+        return {
+            "close": curr.get("close"),
+            "sma200": curr.get("sma"),
+            "stoch_k": curr.get("stoch_k"),
+            "stoch_d": curr.get("stoch_d"),
+            "prev_stoch_k": prev.get("stoch_k"),
+            "prev_stoch_d": prev.get("stoch_d"),
+            "adx": curr.get("adx"),
+            "ha_open": curr.get("ha_open"),
+            "ha_high": curr.get("ha_high"),
+            "ha_low": curr.get("ha_low"),
+            "ha_close": curr.get("ha_close"),
+        }
 
     def _indicator_frame(self, candles: list[Candle]) -> pd.DataFrame:
         df = pd.DataFrame(

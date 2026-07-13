@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import json
 import time
 from decimal import Decimal, ROUND_DOWN
 from typing import Any
@@ -13,6 +14,8 @@ from trader.symbol_rules import SymbolRules, format_decimal, parse_symbol_rules
 
 TESTNET_URL = "https://testnet.binancefuture.com"
 MAINNET_URL = "https://fapi.binance.com"
+DEFAULT_RECV_WINDOW_MS = 10000
+TIMESTAMP_ERROR_CODE = -1021
 
 
 class BinanceFuturesClient:
@@ -21,6 +24,8 @@ class BinanceFuturesClient:
         self.api_secret = api_secret.encode("utf-8")
         self.base_url = TESTNET_URL if testnet else MAINNET_URL
         self.timeout = timeout
+        self.time_offset_ms = 0
+        self._server_time_synced = False
         self.session = requests.Session()
         if api_key:
             self.session.headers.update({"X-MBX-APIKEY": api_key})
@@ -47,6 +52,19 @@ class BinanceFuturesClient:
     def funding_rate(self, symbol: str) -> Decimal:
         data = self._request("GET", "/fapi/v1/premiumIndex", {"symbol": symbol})
         return Decimal(data.get("lastFundingRate", "0"))
+
+    def server_time(self) -> int:
+        data = self._request("GET", "/fapi/v1/time")
+        return int(data["serverTime"])
+
+    def sync_server_time(self) -> int:
+        before_ms = int(time.time() * 1000)
+        server_ms = self.server_time()
+        after_ms = int(time.time() * 1000)
+        local_midpoint_ms = (before_ms + after_ms) // 2
+        self.time_offset_ms = server_ms - local_midpoint_ms
+        self._server_time_synced = True
+        return self.time_offset_ms
 
     def exchange_info(self) -> dict[str, Any]:
         return self._request("GET", "/fapi/v1/exchangeInfo")
@@ -106,14 +124,47 @@ class BinanceFuturesClient:
     def _signed_request(self, method: str, path: str, params: dict[str, Any] | None = None) -> Any:
         if not self.api_key:
             raise ValueError("API key is required for signed Binance requests.")
-        payload = dict(params or {})
-        payload["timestamp"] = int(time.time() * 1000)
-        payload["recvWindow"] = 5000
-        query = urlencode(payload)
-        signature = hmac.new(self.api_secret, query.encode("utf-8"), hashlib.sha256).hexdigest()
-        response = self.session.request(method, self.base_url + path, params=f"{query}&signature={signature}", timeout=self.timeout)
+
+        if not self._server_time_synced:
+            self._try_sync_server_time()
+
+        response = self._send_signed_request(method, path, params)
+        if self._is_timestamp_error(response):
+            if self._try_sync_server_time():
+                response = self._send_signed_request(method, path, params)
+
         self._raise_for_status(response, path)
         return response.json()
+
+    def _try_sync_server_time(self) -> bool:
+        try:
+            self.sync_server_time()
+        except requests.RequestException:
+            return False
+        return True
+
+    def _send_signed_request(self, method: str, path: str, params: dict[str, Any] | None = None) -> requests.Response:
+        payload = dict(params or {})
+        payload["timestamp"] = self._timestamp_ms()
+        payload["recvWindow"] = DEFAULT_RECV_WINDOW_MS
+        query = urlencode(payload)
+        signature = hmac.new(self.api_secret, query.encode("utf-8"), hashlib.sha256).hexdigest()
+        return self.session.request(method, self.base_url + path, params=f"{query}&signature={signature}", timeout=self.timeout)
+
+    def _timestamp_ms(self) -> int:
+        return int(time.time() * 1000) + self.time_offset_ms
+
+    @staticmethod
+    def _is_timestamp_error(response: requests.Response) -> bool:
+        if response.status_code != 400:
+            return False
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError):
+            return str(TIMESTAMP_ERROR_CODE) in response.text
+        if not isinstance(payload, dict):
+            return False
+        return payload.get("code") == TIMESTAMP_ERROR_CODE
 
     @staticmethod
     def _raise_for_status(response: requests.Response, path: str) -> None:

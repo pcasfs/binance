@@ -19,6 +19,7 @@ DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
         "margin_type": "ISOLATED",
         "poll_seconds": 15,
         "live_order_log_path": "logs/live_orders.csv",
+        "event_log_path": "logs/events.csv",
         "daily_summary_dir": "logs/daily",
         "daily_summary_retention_days": 90,
     },

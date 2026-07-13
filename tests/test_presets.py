@@ -35,6 +35,7 @@ def base_settings() -> Settings:
         cooldown_minutes=0,
         max_abs_funding_rate=0,
         live_order_log_path="logs/live_orders.csv",
+        event_log_path="logs/events.csv",
         daily_summary_dir="logs/daily",
         daily_summary_retention_days=90,
         telegram_bot_token="",

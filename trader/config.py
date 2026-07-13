@@ -46,6 +46,7 @@ class Settings:
     cooldown_minutes: int
     max_abs_funding_rate: float
     live_order_log_path: str
+    event_log_path: str
     daily_summary_dir: str
     daily_summary_retention_days: int
     telegram_bot_token: str
@@ -95,6 +96,7 @@ class Settings:
             cooldown_minutes=int(risk_config["cooldown_minutes"]),
             max_abs_funding_rate=float(risk_config["max_abs_funding_rate"]),
             live_order_log_path=str(settings_config["live_order_log_path"]),
+            event_log_path=str(settings_config["event_log_path"]),
             daily_summary_dir=str(settings_config["daily_summary_dir"]),
             daily_summary_retention_days=int(settings_config["daily_summary_retention_days"]),
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),

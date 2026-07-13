@@ -128,10 +128,25 @@ TELEGRAM_CHAT_ID=텔레그램_채팅_ID
 
 알림은 `HOLD`마다 보내지 않고, 봇 시작/종료, 실제 주문 진입, 청산, 주문 에러, tick 에러만 보냅니다.
 
+분석용 이벤트 로그는 아래 파일에 누적됩니다.
+
+```text
+logs/events.csv
+```
+
+이 파일에는 신호 확인, 진입 차단, 포지션 점검, 손절/익절 트리거, 주문 성공/실패, tick 에러가 한 줄씩 저장됩니다. 진입 당시 StochRSI, ADX, Heikin-Ashi, SMA200 값과 포지션 보유 중 pnl, 손절가/익절가, 손절가까지 거리도 함께 남깁니다.
+
+최근 로그를 확인하려면:
+
+```bash
+tail -n 100 logs/events.csv
+```
+
 하루 요약 로그는 `config\live.yaml`의 설정을 따릅니다.
 
 ```yaml
 settings:
+  event_log_path: logs/events.csv
   daily_summary_dir: logs/daily
   daily_summary_retention_days: 90
 ```

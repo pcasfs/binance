@@ -23,6 +23,9 @@ from trader.symbol_rules import SymbolRules, plan_order_quantity
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+ORDER_LOOKUP_ATTEMPTS = 3
+ORDER_LOOKUP_DELAY_SECONDS = 0.35
+
 
 @dataclass(frozen=True)
 class LivePosition:
@@ -352,7 +355,8 @@ class TradingBot:
             )
             raise
 
-        filled_price = self._filled_price(response)
+        order_details = self._order_details_after_market_order(symbol, response)
+        filled_price = self._filled_price(order_details)
         self._write_order_log(
             settings,
             symbol=symbol,
@@ -363,8 +367,8 @@ class TradingBot:
             filled_price=filled_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            order_id=response.get("orderId"),
-            status=str(response.get("status", "UNKNOWN")),
+            order_id=order_details.get("orderId", response.get("orderId")),
+            status=str(order_details.get("status", response.get("status", "UNKNOWN"))),
             error_message="",
         )
         self._record_event(
@@ -376,11 +380,11 @@ class TradingBot:
             quantity=quantity,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            order_id=response.get("orderId"),
-            status=str(response.get("status", "UNKNOWN")),
+            order_id=order_details.get("orderId", response.get("orderId")),
+            status=str(order_details.get("status", response.get("status", "UNKNOWN"))),
             reason=action,
         )
-        return response
+        return order_details
 
     def _has_open_position(self, symbol: str, mark_price: Decimal) -> bool:
         if self.settings.dry_run:
@@ -492,6 +496,28 @@ class TradingBot:
                 }
             )
 
+    def _order_details_after_market_order(self, symbol: str, response: dict[str, Any]) -> dict[str, Any]:
+        order_id = response.get("orderId")
+        if not order_id:
+            return response
+
+        latest = response
+        for attempt in range(ORDER_LOOKUP_ATTEMPTS):
+            if attempt > 0:
+                time.sleep(ORDER_LOOKUP_DELAY_SECONDS)
+            try:
+                latest = self.client.get_order(symbol, order_id)
+            except Exception as exc:
+                logger.warning("%s order lookup failed orderId=%s error=%s", symbol, order_id, exc)
+                self._record_event("ORDER_LOOKUP_ERROR", symbol=symbol, order_id=order_id, error=str(exc))
+                return response
+
+            if self._filled_price(latest) is not None:
+                return latest
+            if str(latest.get("status", "")).upper() in {"FILLED", "PARTIALLY_FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+                return latest
+        return latest
+
     def _record_signal_event_once_per_candle(
         self,
         symbol: str,
@@ -551,8 +577,19 @@ class TradingBot:
     def _filled_price(response: dict[str, Any]) -> Decimal | None:
         for key in ("avgPrice", "price"):
             value = response.get(key)
-            if value not in (None, "", "0", 0):
-                return Decimal(str(value))
+            if value in (None, ""):
+                continue
+            price = Decimal(str(value))
+            if price != 0:
+                return price
+        executed_qty = response.get("executedQty")
+        quote_qty = response.get("cumQuote")
+        if executed_qty in (None, "") or quote_qty in (None, ""):
+            return None
+        executed = Decimal(str(executed_qty))
+        quote = Decimal(str(quote_qty))
+        if executed != 0 and quote != 0:
+            return quote / executed
         return None
 
     @staticmethod

@@ -75,3 +75,18 @@ class BinanceClientTimeTest(TestCase):
         self.assertEqual(first_signed_params["timestamp"], ["1000000"])
         self.assertEqual(retry_signed_params["timestamp"], ["1005300"])
         self.assertEqual(len(session.calls), 3)
+
+    def test_get_order_uses_signed_order_endpoint(self) -> None:
+        session = FakeSession([FakeResponse(200, {"orderId": 123, "status": "FILLED"})])
+        client = BinanceFuturesClient("key", "secret", testnet=True)
+        client.session = session
+        client._server_time_synced = True
+
+        with patch("trader.binance_client.time.time", return_value=1000.000):
+            result = client.get_order("SOLUSDT", 123)
+
+        params = parse_qs(str(session.calls[0]["params"]))
+        self.assertEqual(result, {"orderId": 123, "status": "FILLED"})
+        self.assertTrue(str(session.calls[0]["url"]).endswith("/fapi/v1/order"))
+        self.assertEqual(params["symbol"], ["SOLUSDT"])
+        self.assertEqual(params["orderId"], ["123"])

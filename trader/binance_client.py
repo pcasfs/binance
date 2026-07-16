@@ -112,6 +112,9 @@ class BinanceFuturesClient:
             {"symbol": symbol, "side": side, "type": "MARKET", "quantity": format_decimal(quantity), "positionSide": position_side},
         )
 
+    def get_order(self, symbol: str, order_id: object) -> dict[str, Any]:
+        return self._signed_request("GET", "/fapi/v1/order", {"symbol": symbol, "orderId": order_id})
+
     @staticmethod
     def round_down(value: Decimal, step: Decimal) -> Decimal:
         return (value / step).to_integral_value(rounding=ROUND_DOWN) * step

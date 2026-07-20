@@ -33,6 +33,7 @@ def base_settings() -> Settings:
         daily_loss_limit_pct=0,
         max_consecutive_losses=0,
         cooldown_minutes=0,
+        order_error_cooldown_minutes=60,
         max_abs_funding_rate=0,
         live_order_log_path="logs/live_orders.csv",
         event_log_path="logs/events.csv",

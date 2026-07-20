@@ -44,6 +44,7 @@ class Settings:
     daily_loss_limit_pct: float
     max_consecutive_losses: int
     cooldown_minutes: int
+    order_error_cooldown_minutes: int
     max_abs_funding_rate: float
     live_order_log_path: str
     event_log_path: str
@@ -94,6 +95,7 @@ class Settings:
             daily_loss_limit_pct=float(risk_config["daily_loss_limit_pct"]),
             max_consecutive_losses=int(risk_config["max_consecutive_losses"]),
             cooldown_minutes=int(risk_config["cooldown_minutes"]),
+            order_error_cooldown_minutes=int(risk_config["order_error_cooldown_minutes"]),
             max_abs_funding_rate=float(risk_config["max_abs_funding_rate"]),
             live_order_log_path=str(settings_config["live_order_log_path"]),
             event_log_path=str(settings_config["event_log_path"]),
@@ -123,7 +125,7 @@ class Settings:
             raise ValueError("USDT_PER_TRADE cannot exceed MAX_POSITION_USDT.")
         if self.daily_loss_limit_usdt < 0 or self.daily_loss_limit_pct < 0:
             raise ValueError("Daily loss limits cannot be negative.")
-        if self.max_consecutive_losses < 0 or self.cooldown_minutes < 0:
+        if self.max_consecutive_losses < 0 or self.cooldown_minutes < 0 or self.order_error_cooldown_minutes < 0:
             raise ValueError("Cooldown settings cannot be negative.")
         if self.max_abs_funding_rate < 0:
             raise ValueError("MAX_ABS_FUNDING_RATE cannot be negative.")

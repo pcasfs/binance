@@ -50,6 +50,7 @@ DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
         "daily_loss_limit_pct": 0,
         "max_consecutive_losses": 0,
         "cooldown_minutes": 0,
+        "order_error_cooldown_minutes": 60,
         "max_abs_funding_rate": 0,
     },
     "notifications": {

@@ -67,6 +67,7 @@ class TradingBot:
         self.daily_realized_pnl = Decimal("0")
         self.consecutive_losses = 0
         self.cooldown_until = 0.0
+        self.order_error_cooldown_until: dict[tuple[str, str], float] = {}
         self._symbol_rules: dict[str, SymbolRules] = {}
         self.notifier = TelegramNotifier(settings)
         self.summary = DailySummaryLogger(settings, self.symbols, base_interval, preset)
@@ -148,6 +149,11 @@ class TradingBot:
             self.summary.record_blocked(symbol, "cooldown is active")
             self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason="cooldown is active")
             return False
+        if self._order_error_cooldown_active(symbol, action):
+            logger.warning("%s %s entry blocked: order error cooldown is active.", symbol, action)
+            self.summary.record_blocked(symbol, "order error cooldown is active")
+            self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason="order error cooldown is active")
+            return False
         if self._funding_unfavorable(symbol, action, settings):
             logger.info("%s entry blocked: funding rate is unfavorable for %s.", symbol, action)
             self.summary.record_blocked(symbol, "funding rate is unfavorable")
@@ -188,6 +194,8 @@ class TradingBot:
             stop_loss=self._stop_price(action, mark_price, settings),
             take_profit=self._target_price(action, mark_price, settings),
         )
+        if response is None:
+            return False
         self.summary.record_entry(symbol, action, quantity, quantity_plan.notional)
         self.notifier.send(
             "Entry order sent\n"
@@ -353,7 +361,8 @@ class TradingBot:
                 status="ERROR",
                 reason=action,
             )
-            raise
+            self._start_order_error_cooldown(symbol, position_side, action, settings, str(exc))
+            return None
 
         order_details = self._order_details_after_market_order(symbol, response)
         filled_price = self._filled_price(order_details)
@@ -407,6 +416,36 @@ class TradingBot:
     def _cooldown_active(self) -> bool:
         return time.time() < self.cooldown_until
 
+    def _order_error_cooldown_active(self, symbol: str, action: str) -> bool:
+        until = self.order_error_cooldown_until.get((symbol, action), 0.0)
+        return time.time() < until
+
+    def _start_order_error_cooldown(
+        self,
+        symbol: str,
+        position_side: str,
+        action: str,
+        settings: Settings,
+        error_message: str,
+    ) -> None:
+        if action != "entry" or settings.order_error_cooldown_minutes <= 0:
+            return
+        until = time.time() + settings.order_error_cooldown_minutes * 60
+        self.order_error_cooldown_until[(symbol, position_side)] = until
+        logger.warning(
+            "%s %s entry order error cooldown started for %s minutes.",
+            symbol,
+            position_side,
+            settings.order_error_cooldown_minutes,
+        )
+        self._record_event(
+            "ORDER_ERROR_COOLDOWN",
+            symbol=symbol,
+            side=position_side,
+            reason=f"{settings.order_error_cooldown_minutes} minutes",
+            error=error_message,
+        )
+
     def _funding_unfavorable(self, symbol: str, action: str, settings: Settings) -> bool:
         if settings.max_abs_funding_rate <= 0:
             return False
@@ -441,6 +480,7 @@ class TradingBot:
             self.daily_realized_pnl = Decimal("0")
             self.consecutive_losses = 0
             self.cooldown_until = 0.0
+            self.order_error_cooldown_until.clear()
         self.summary.roll_if_needed()
 
     def _write_order_log(

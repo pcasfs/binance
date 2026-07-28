@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 ORDER_LOOKUP_ATTEMPTS = 3
 ORDER_LOOKUP_DELAY_SECONDS = 0.35
+CANDLE_CLOSE_GRACE_MS = 1000
 
 
 @dataclass(frozen=True)
@@ -118,11 +119,8 @@ class TradingBot:
     def _tick_symbol(self, symbol: str) -> None:
         settings = self.symbol_settings[symbol]
         strategy = self.strategies[symbol]
-        raw = self.client.get_klines(symbol, settings.interval, limit=max(300, strategy.warmup_candles + 20))
-        candles = [
-            Candle(int(item[0]), Decimal(item[1]), Decimal(item[2]), Decimal(item[3]), Decimal(item[4]), Decimal(item[5]), int(item[6]))
-            for item in raw
-        ]
+        raw = self.client.get_klines(symbol, settings.interval, limit=max(301, strategy.warmup_candles + 21))
+        candles = self._closed_candles_from_klines(raw)
         signal = strategy.signal(candles)
         mark_price = self.client.mark_price(symbol)
         self._record_signal_event_once_per_candle(symbol, signal.action, signal.reason, mark_price, candles, strategy)
@@ -557,6 +555,23 @@ class TradingBot:
             if str(latest.get("status", "")).upper() in {"FILLED", "PARTIALLY_FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
                 return latest
         return latest
+
+    @staticmethod
+    def _closed_candles_from_klines(raw_klines: list[list[Any]], now_ms: int | None = None) -> list[Candle]:
+        cutoff_ms = (now_ms if now_ms is not None else int(time.time() * 1000)) - CANDLE_CLOSE_GRACE_MS
+        return [
+            Candle(
+                int(item[0]),
+                Decimal(item[1]),
+                Decimal(item[2]),
+                Decimal(item[3]),
+                Decimal(item[4]),
+                Decimal(item[5]),
+                int(item[6]),
+            )
+            for item in raw_klines
+            if int(item[6]) <= cutoff_ms
+        ]
 
     def _record_signal_event_once_per_candle(
         self,

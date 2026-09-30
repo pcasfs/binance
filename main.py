@@ -1,15 +1,18 @@
 ﻿from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 
 from trader.backtest import Backtester
 from trader.bot import TradingBot
 from trader.config import Settings
 from trader.data_loader import download_to_csv
+from trader.log_archive import LogArchiveConfig, upload_analysis_pack
 from trader.optimize import Optimizer
 from trader.portfolio import download_many, parse_symbols, portfolio_backtest
 from trader.preflight import PreflightChecker
 from trader.presets import apply_symbol_preset, preset_names
+from trader.runtime_config import load_runtime_config
 
 
 def main() -> None:
@@ -68,7 +71,33 @@ def main() -> None:
     preflight.add_argument("--interval", default=None)
     preflight.add_argument("--preset", choices=preset_names(), default="default")
 
+    upload_logs = sub.add_parser("upload-logs", help="Build the analysis log pack and upload it to private S3")
+    upload_logs.add_argument("--bucket", default=None, help="Override log_archive.bucket from config/live.yaml")
+    upload_logs.add_argument("--prefix", default=None, help="Override the S3 object prefix")
+
     args = parser.parse_args()
+
+    if args.command == "upload-logs":
+        try:
+            runtime_config = load_runtime_config()
+            archive_config = LogArchiveConfig.from_runtime_config(runtime_config)
+            if args.bucket is not None:
+                archive_config = replace(archive_config, bucket=args.bucket.strip())
+            if args.prefix is not None:
+                archive_config = replace(archive_config, prefix=args.prefix.strip("/"))
+            settings_config = runtime_config["settings"]
+            pack_path, object_key = upload_analysis_pack(
+                archive_config,
+                live_order_path=str(settings_config["live_order_log_path"]),
+                event_path=str(settings_config["event_log_path"]),
+            )
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            parser.error(str(exc))
+        size_mb = pack_path.stat().st_size / (1024 * 1024)
+        print(f"Analysis pack: {pack_path} ({size_mb:.2f} MiB)")
+        print(f"Uploaded: s3://{archive_config.bucket}/{object_key}")
+        return
+
     settings = Settings.from_env()
 
     if args.command == "download":

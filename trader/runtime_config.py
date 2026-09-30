@@ -57,6 +57,12 @@ DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
         "telegram_enabled": True,
         "telegram_timeout_seconds": 10,
     },
+    "log_archive": {
+        "bucket": "",
+        "prefix": "binance-bot/logs",
+        "pack_path": "logs/analysis_pack_full.txt",
+        "storage_class": "STANDARD",
+    },
     "presets": {
         "default": {},
         "optimized": {

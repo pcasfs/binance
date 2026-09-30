@@ -142,6 +142,61 @@ logs/events.csv
 tail -n 100 logs/events.csv
 ```
 
+### S3로 분석 로그 업로드
+
+반복 다운로드를 위해 8000번 포트를 열지 않고 비공개 S3 버킷을 사용합니다. EC2에는 S3 버킷의 지정 경로에만 `s3:PutObject`를 허용하는 IAM 역할을 연결하고, AWS 액세스 키는 `.env`나 설정 파일에 저장하지 않습니다.
+
+1. 서울 리전에 비공개 S3 버킷을 만들고 `모든 퍼블릭 액세스 차단`을 유지합니다.
+2. 아래 정책에서 `BUCKET_NAME`을 실제 버킷 이름으로 바꿔 EC2용 IAM 역할에 연결합니다.
+3. EC2 인스턴스의 `보안 > IAM 역할 수정`에서 이 역할을 연결합니다.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:AbortMultipartUpload"
+      ],
+      "Resource": "arn:aws:s3:::BUCKET_NAME/binance-bot/logs/analysis_pack_full.txt"
+    }
+  ]
+}
+```
+
+서버에 새 의존성을 설치합니다.
+
+```bash
+cd ~/binance
+python3 -m pip install -r requirements.txt
+```
+
+`config/live.yaml`에 비공개 버킷 이름을 설정합니다.
+
+```yaml
+log_archive:
+  bucket: my-private-binance-log-bucket
+  prefix: binance-bot/logs
+  pack_path: logs/analysis_pack_full.txt
+  storage_class: STANDARD
+```
+
+서버에서 아래 명령을 실행하면 `live_orders.csv`와 `events.csv`를 하나의 분석 파일로 만들고 동일한 S3 객체 키에 덮어씁니다.
+
+```bash
+python3 main.py upload-logs
+```
+
+설정 파일을 바꾸지 않고 한 번만 실행할 수도 있습니다.
+
+```bash
+python3 main.py upload-logs --bucket my-private-binance-log-bucket
+```
+
+업로드 위치는 `s3://버킷이름/binance-bot/logs/analysis_pack_full.txt`입니다. 버킷 버전 관리를 켜면 이전 버전도 과금 대상이 될 수 있으므로, 최신 파일 하나만 유지하려면 버전 관리를 끄거나 수명 주기 규칙으로 이전 버전을 삭제합니다.
+
 하루 요약 로그는 `config\live.yaml`의 설정을 따릅니다.
 
 ```yaml

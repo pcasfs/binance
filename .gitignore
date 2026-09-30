@@ -7,3 +7,6 @@ __pycache__/
 .ruff_cache/
 data/*.csv
 !data/.gitkeep
+logs/*.csv
+logs/*.txt
+logs/daily/

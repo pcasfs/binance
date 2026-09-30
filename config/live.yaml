@@ -44,7 +44,7 @@ notifications:
   telegram_timeout_seconds: 10
 
 log_archive:
-  bucket: ""
+  bucket: donghun-binance-bot-logs
   prefix: binance-bot/logs
   pack_path: logs/analysis_pack_full.txt
   storage_class: STANDARD

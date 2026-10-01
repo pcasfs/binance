@@ -172,7 +172,7 @@ class Optimizer:
                     action = self._signal(index, params)
                     if self._allowed(action):
                         entry_price = next_candle.open
-                        quantity = Decimal(str(self.settings.usdt_per_trade)) / entry_price
+                        quantity = Decimal(str(self.settings.trade_amount_for(self.symbol))) / entry_price
                         entry_fee = entry_price * quantity * Decimal(str(self.settings.fee_rate))
                         balance -= entry_fee
                         position = (action, next_candle.open_time, entry_price, quantity)

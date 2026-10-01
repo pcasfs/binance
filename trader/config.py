@@ -26,7 +26,9 @@ class Settings:
     strategy: str
     leverage: int
     margin_type: str
+    allowed_entry_sides: tuple[str, ...]
     usdt_per_trade: float
+    symbol_usdt_per_trade: dict[str, float]
     starting_balance: float
     max_position_usdt: float
     fee_rate: float
@@ -77,7 +79,14 @@ class Settings:
             strategy=str(settings_config["strategy"]).lower(),
             leverage=int(settings_config["leverage"]),
             margin_type=str(settings_config["margin_type"]).upper(),
+            allowed_entry_sides=tuple(
+                str(side).upper() for side in settings_config["allowed_entry_sides"]
+            ),
             usdt_per_trade=float(capital_config["usdt_per_trade"]),
+            symbol_usdt_per_trade={
+                str(symbol).upper(): float(amount)
+                for symbol, amount in capital_config["symbol_usdt_per_trade"].items()
+            },
             starting_balance=float(capital_config["starting_balance"]),
             max_position_usdt=float(capital_config["max_position_usdt"]),
             fee_rate=float(fees_config["fee_rate"]),
@@ -119,10 +128,19 @@ class Settings:
             raise ValueError("Stoch thresholds must satisfy 0 < long < short < 100.")
         if self.sma_period < 2:
             raise ValueError("SMA_PERIOD must be at least 2.")
+        if not self.allowed_entry_sides or not set(self.allowed_entry_sides) <= {"LONG", "SHORT"}:
+            raise ValueError("allowed_entry_sides must contain LONG, SHORT, or both.")
+        if len(set(self.allowed_entry_sides)) != len(self.allowed_entry_sides):
+            raise ValueError("allowed_entry_sides cannot contain duplicates.")
         if self.usdt_per_trade <= 0 or self.starting_balance <= 0:
             raise ValueError("Trade amount and starting balance must be positive.")
         if self.usdt_per_trade > self.max_position_usdt:
             raise ValueError("USDT_PER_TRADE cannot exceed MAX_POSITION_USDT.")
+        for symbol, amount in self.symbol_usdt_per_trade.items():
+            if amount <= 0:
+                raise ValueError(f"Trade amount for {symbol} must be positive.")
+            if amount > self.max_position_usdt:
+                raise ValueError(f"Trade amount for {symbol} cannot exceed MAX_POSITION_USDT.")
         if self.daily_loss_limit_usdt < 0 or self.daily_loss_limit_pct < 0:
             raise ValueError("Daily loss limits cannot be negative.")
         if self.max_consecutive_losses < 0 or self.cooldown_minutes < 0 or self.order_error_cooldown_minutes < 0:
@@ -133,3 +151,9 @@ class Settings:
             raise ValueError("daily_summary_retention_days must be at least 1.")
         if self.telegram_timeout_seconds < 1:
             raise ValueError("telegram_timeout_seconds must be at least 1.")
+
+    def entry_side_allowed(self, side: str) -> bool:
+        return side.upper() in self.allowed_entry_sides
+
+    def trade_amount_for(self, symbol: str) -> float:
+        return self.symbol_usdt_per_trade.get(symbol.upper(), self.usdt_per_trade)

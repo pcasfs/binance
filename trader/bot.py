@@ -64,6 +64,7 @@ class TradingBot:
             for symbol, symbol_settings in self.symbol_settings.items()
         }
         self.last_action: dict[str, str | None] = {symbol: None for symbol in self.symbols}
+        self.last_disabled_action: dict[str, str | None] = {symbol: None for symbol in self.symbols}
         self.daily_date = datetime.now(timezone.utc).date()
         self.daily_realized_pnl = Decimal("0")
         self.consecutive_losses = 0
@@ -77,23 +78,36 @@ class TradingBot:
 
     def run_forever(self) -> None:
         first_settings = next(iter(self.symbol_settings.values()))
+        trade_amounts = ",".join(
+            f"{symbol}:{self.symbol_settings[symbol].trade_amount_for(symbol):g}"
+            for symbol in self.symbols
+        )
         logger.info(
-            "Starting live bot symbols=%s interval=%s testnet=%s dry_run=%s",
+            "Starting live bot symbols=%s interval=%s testnet=%s dry_run=%s entry_sides=%s trade_amounts=%s",
             ",".join(self.symbols),
             first_settings.interval,
             self.settings.testnet,
             self.settings.dry_run,
+            ",".join(self.settings.allowed_entry_sides),
+            trade_amounts,
         )
         self.notifier.send(
             "Binance bot started\n"
             f"symbols={','.join(self.symbols)}\n"
             f"interval={first_settings.interval}\n"
             f"testnet={self.settings.testnet}\n"
-            f"dry_run={self.settings.dry_run}"
+            f"dry_run={self.settings.dry_run}\n"
+            f"entry_sides={','.join(self.settings.allowed_entry_sides)}\n"
+            f"trade_amounts={trade_amounts}"
         )
         self._record_event(
             "BOT_START",
-            message=f"symbols={','.join(self.symbols)} interval={first_settings.interval} testnet={self.settings.testnet} dry_run={self.settings.dry_run}",
+            message=(
+                f"symbols={','.join(self.symbols)} interval={first_settings.interval} "
+                f"testnet={self.settings.testnet} dry_run={self.settings.dry_run} "
+                f"entry_sides={','.join(self.settings.allowed_entry_sides)} "
+                f"trade_amounts={trade_amounts}"
+            ),
         )
         while True:
             try:
@@ -127,11 +141,26 @@ class TradingBot:
         self._manage_open_positions(symbol, settings, mark_price)
         logger.info("%s signal=%s reason=%s mark=%s", symbol, signal.action, signal.reason, mark_price)
         self.summary.record_signal(symbol, signal.action)
+        if signal.action not in {"LONG", "SHORT"}:
+            self.last_disabled_action[symbol] = None
+            return
+        if not settings.entry_side_allowed(signal.action):
+            if self.last_disabled_action[symbol] != signal.action:
+                self._order(symbol, settings, signal.action, mark_price)
+                self.last_disabled_action[symbol] = signal.action
+            return
+        self.last_disabled_action[symbol] = None
         if signal.action in {"LONG", "SHORT"} and signal.action != self.last_action[symbol]:
             if self._order(symbol, settings, signal.action, mark_price):
                 self.last_action[symbol] = signal.action
 
     def _order(self, symbol: str, settings: Settings, action: str, mark_price: Decimal) -> bool:
+        if not settings.entry_side_allowed(action):
+            reason = f"{action} entries are disabled by configuration"
+            logger.info("%s entry blocked: %s.", symbol, reason)
+            self.summary.record_blocked(symbol, reason)
+            self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason=reason)
+            return False
         if self._has_open_position(symbol, mark_price):
             logger.info("%s entry blocked: symbol already has an open position.", symbol)
             self.summary.record_blocked(symbol, "symbol already has an open position")
@@ -159,8 +188,9 @@ class TradingBot:
             return False
 
         side = "BUY" if action == "LONG" else "SELL"
+        trade_amount = settings.trade_amount_for(symbol)
         quantity_plan = plan_order_quantity(
-            Decimal(str(settings.usdt_per_trade)),
+            Decimal(str(trade_amount)),
             mark_price,
             self._rules(symbol),
         )
@@ -170,7 +200,15 @@ class TradingBot:
             self._record_event("ENTRY_BLOCKED", symbol=symbol, side=action, mark_price=mark_price, reason=quantity_plan.reason)
             return False
         quantity = quantity_plan.quantity
-        logger.info("%s order intent side=%s positionSide=%s quantity=%s notional=%s", symbol, side, action, quantity, quantity_plan.notional)
+        logger.info(
+            "%s order intent side=%s positionSide=%s configured_amount=%s quantity=%s notional=%s",
+            symbol,
+            side,
+            action,
+            trade_amount,
+            quantity,
+            quantity_plan.notional,
+        )
         if settings.dry_run:
             self.summary.record_entry(symbol, f"DRY_RUN_{action}", quantity, quantity_plan.notional)
             self.notifier.send(

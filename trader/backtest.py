@@ -92,7 +92,7 @@ class Backtester:
 
     def _open(self, side: str, candle: Candle) -> None:
         entry_price = candle.open
-        quantity = Decimal(str(self.settings.usdt_per_trade)) / entry_price
+        quantity = Decimal(str(self.settings.trade_amount_for(self.symbol))) / entry_price
         fee = entry_price * quantity * Decimal(str(self.settings.fee_rate))
         self.balance -= fee
         self.position = OpenPosition(side=side, entry_time=candle.open_time, entry_price=entry_price, quantity=quantity)

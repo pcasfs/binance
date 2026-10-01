@@ -32,6 +32,20 @@ TELEGRAM_CHAT_ID=
 
 전략 옵션, 심볼별 최적값, 진입금액, 손실 제한 같은 운용 설정은 `.env`가 아니라 `config\live.yaml`에서 수정합니다. `.env`는 API 키와 실행 환경값만 보관합니다.
 
+신규 진입 방향과 심볼별 주문금액도 `config\live.yaml`에서 관리합니다. 아래 설정은 신규 롱만 허용하고 BTC는 130 USDT, 나머지 심볼은 기본 65 USDT를 사용합니다. 이미 보유한 숏 포지션의 청산 관리는 계속 실행됩니다.
+
+```yaml
+settings:
+  allowed_entry_sides:
+    - LONG
+
+capital:
+  usdt_per_trade: 65
+  symbol_usdt_per_trade:
+    BTCUSDT: 130
+  max_position_usdt: 150
+```
+
 ## 과거 데이터 다운로드
 
 ```powershell

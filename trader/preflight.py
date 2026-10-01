@@ -27,6 +27,7 @@ class PreflightChecker:
         print(f"Symbols: {','.join(self.symbols)}")
         print(f"Interval: {self.interval}")
         print(f"Preset: {self.preset}")
+        print(f"Allowed entry sides: {','.join(self.base_settings.allowed_entry_sides)}")
         print()
 
         signed_ok = self._signed_checks()
@@ -111,10 +112,12 @@ class PreflightChecker:
 
         try:
             mark_price = self.client.mark_price(symbol)
-            quantity_plan = plan_order_quantity(Decimal(str(settings.usdt_per_trade)), mark_price, rules)
+            trade_amount = settings.trade_amount_for(symbol)
+            quantity_plan = plan_order_quantity(Decimal(str(trade_amount)), mark_price, rules)
             status = "OK" if quantity_plan.is_valid else "FAIL"
             print(
                 f"[{status}] Quantity "
+                f"configuredAmount={trade_amount} "
                 f"mark={mark_price} raw={format_decimal(quantity_plan.raw_quantity)} "
                 f"rounded={format_decimal(quantity_plan.quantity)} notional={format_decimal(quantity_plan.notional)} "
                 f"reason={quantity_plan.reason}"

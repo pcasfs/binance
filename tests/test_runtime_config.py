@@ -18,3 +18,11 @@ class RuntimeConfigTest(TestCase):
         self.assertIn("capital", config)
         self.assertIn("risk", config)
         self.assertIn("heikin_ashi_stoch", config)
+
+    def test_live_config_is_long_only_with_btc_specific_amount(self) -> None:
+        config = load_runtime_config()
+
+        self.assertEqual(config["settings"]["allowed_entry_sides"], ["LONG"])
+        self.assertEqual(config["capital"]["usdt_per_trade"], 65)
+        self.assertEqual(config["capital"]["symbol_usdt_per_trade"]["BTCUSDT"], 130)
+        self.assertGreaterEqual(config["capital"]["max_position_usdt"], 130)

@@ -17,6 +17,7 @@ DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
         "strategy": "heikin_ashi_stoch",
         "leverage": 2,
         "margin_type": "ISOLATED",
+        "allowed_entry_sides": ["LONG", "SHORT"],
         "poll_seconds": 15,
         "live_order_log_path": "logs/live_orders.csv",
         "event_log_path": "logs/events.csv",
@@ -25,6 +26,7 @@ DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
     },
     "capital": {
         "usdt_per_trade": 100,
+        "symbol_usdt_per_trade": {},
         "starting_balance": 1000,
         "max_position_usdt": 100,
     },

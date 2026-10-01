@@ -4,6 +4,8 @@ settings:
   strategy: heikin_ashi_stoch
   leverage: 2
   margin_type: ISOLATED
+  allowed_entry_sides:
+    - LONG
   poll_seconds: 15
   live_order_log_path: logs/live_orders.csv
   event_log_path: logs/events.csv
@@ -12,8 +14,10 @@ settings:
 
 capital:
   usdt_per_trade: 65
+  symbol_usdt_per_trade:
+    BTCUSDT: 130
   starting_balance: 1000
-  max_position_usdt: 100
+  max_position_usdt: 150
 
 fees:
   fee_rate: 0.0004
